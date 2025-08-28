@@ -17,7 +17,7 @@ export default function Home() {
       body: JSON.stringify({ prompt: input, lang }),
     });
     const data = await res.json();
-    setAnswer(data.text || 'No response');
+    setResponse(data.text);
     setLoading(false);
   }
 
