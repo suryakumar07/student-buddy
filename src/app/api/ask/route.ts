@@ -1,9 +1,48 @@
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest} from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { supabaseAdmin } from '@/lib/supabase';
+import { getOrSetUID } from '@/lib/uid';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-export async function POST(req: Request) {
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+async function canRequest(uid: string, limit = 5) {
+  const day = today();
+  const { data, error } = await supabaseAdmin
+    .from('usage_counters')
+    .select('count')
+    .eq('uid', uid)
+    .eq('day', day)
+    .single();
+
+  const used = data?.count ?? 0;
+  return { allowed: used < limit, count: used };
+}
+
+async function incrementUsage(uid: string) {
+  const day = new Date().toISOString().split("T")[0];
+  try {
+    await supabaseAdmin.rpc("increment_usage", { u_uid: uid, u_day: day });
+  } catch (e) {
+    console.error("Supabase RPC error:", e);
+  }
+}
+
+
+export async function POST(req: NextRequest) {
+  const uid = await getOrSetUID();
+  const { allowed, count } = await canRequest(uid, 5);
+
+  if (!allowed) {
+    return NextResponse.json(
+      { error: 'Daily limit reached (5 free uses). Please wait or upgrade.' },
+      { status: 429 }
+    );
+  }
+
   try {
     const { query } = await req.json();
 
@@ -18,7 +57,10 @@ export async function POST(req: Request) {
 
     console.log("Incoming query:", query);
 
+    await incrementUsage(uid);
+
     return NextResponse.json({ text });
+
   } catch (error) {
   if (error instanceof Error) {
     console.error("Gemini API error:", error);
