@@ -1,37 +1,26 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { NextResponse } from "next/server";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-export const runtime = 'nodejs'; // ensure Node runtime
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-type Lang = 'en' | 'ta';
-
-const SYSTEM_EN = `You are a concise study assistant for students. Keep answers short, clear, and exam-friendly.`;
-const SYSTEM_TA = `நீங்கள் மாணவர்களுக்கு உதவும் சுருக்கமான படிப்பு உதவியாளர். பதில்கள் தெளிவாகவும் சுருக்கமாகவும் இருக்கட்டும்.`;
-
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const { prompt, lang }: { prompt: string; lang: Lang } = await req.json();
-    if (!prompt || !['en','ta'].includes(lang)) {
-      return NextResponse.json({ error: 'Bad request' }, { status: 400 });
+    const { query } = await req.json();
+
+    if (!query) {
+      return NextResponse.json({ error: "Query is required" }, { status: 400 });
     }
 
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-    const system = lang === 'en' ? SYSTEM_EN : SYSTEM_TA;
-    const translateTo = lang === 'en' ? 'English' : 'Tamil';
-
-    const result = await model.generateContent(
-      `${system}\n\nUser question:\n${prompt}\n\nRespond in ${translateTo} only.`
-    );
+    const result = await model.generateContent(query);
     const text = result.response.text();
+
+    console.log("Incoming query:", query);
+
     return NextResponse.json({ text });
-  } catch (error: unknown) {
-  if (error instanceof Error) {
-    console.error("Gemini API error:", error.message);
-    return NextResponse.json({ text: "Error: " + error.message }, { status: 500 });
+  } catch (error: any) {
+    console.error("API Error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  console.error("Gemini API error:", error);
-  return NextResponse.json({ text: "Unknown error" }, { status: 500 });
-}
 }
