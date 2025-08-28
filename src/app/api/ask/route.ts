@@ -5,8 +5,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // Initialize Supabase client (service role for server-side only)
 const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE!
 );
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
