@@ -9,7 +9,28 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-async function canRequest(uid: string, limit = 5) {
+// Define plan limits
+const LIMITS = {
+  free: 5,   // Free users = 5 requests/day
+  paid: 50,  // Paid users = 50 requests/day
+};
+
+async function getUserPlan(uid: string): Promise<"free" | "paid"> {
+  const { data, error } = await supabaseAdmin
+    .from("users")
+    .select("plan")
+    .eq("uid", uid)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Error fetching user plan:", error);
+    return "free"; // fallback
+  }
+
+  return (data?.plan as "free" | "paid") ?? "free";
+}
+
+async function checkUsageLimit(uid: string, plan: "free" | "paid") {
   const day = today();
 
   const { data, error } = await supabaseAdmin
@@ -17,25 +38,33 @@ async function canRequest(uid: string, limit = 5) {
     .select("count")
     .eq("uid", uid)
     .eq("day", day)
-    .maybeSingle(); // safer than .single()
+    .maybeSingle();
 
   if (error) {
     console.error("Error fetching usage:", error);
-    return { allowed: false, count: 0 };
+    throw error;
   }
 
   const used = data?.count ?? 0;
-  return { allowed: used < limit, count: used };
+  const limit = LIMITS[plan];
+
+  return {
+    allowed: used < limit,
+    used,
+    remaining: Math.max(limit - used, 0),
+    limit,
+  };
 }
 
 async function incrementUsage(uid: string) {
   const day = today();
 
+  // Upsert with count + 1
   const { data, error } = await supabaseAdmin
     .from("usage_counters")
     .upsert(
-      [{ uid, day, count: 1 }], // wrap in array
-      { onConflict: "uid,day" } // string, not array
+      { uid, day, count: 1 }, // insert if not exists
+      { onConflict: "uid,day" }
     )
     .select()
     .single();
@@ -45,11 +74,10 @@ async function incrementUsage(uid: string) {
     throw error;
   }
 
-  // If this row already existed, increment count
+  // If row existed → increment
   const newCount = (data?.count ?? 0) + (data?.count ? 1 : 0);
 
   if (data?.count) {
-    // Update count when row already exists
     const { error: updateErr } = await supabaseAdmin
       .from("usage_counters")
       .update({ count: newCount })
@@ -64,14 +92,15 @@ async function incrementUsage(uid: string) {
   return newCount;
 }
 
-
 export async function POST(req: NextRequest) {
   const uid = await getOrSetUID();
-  const { allowed, count } = await canRequest(uid, 5);
+  const plan = await getUserPlan(uid);
 
-  if (!allowed) {
+  const usage = await checkUsageLimit(uid, plan);
+
+  if (!usage.allowed) {
     return NextResponse.json(
-      { error: "Daily limit reached (5 free uses). Please wait or upgrade." },
+      { error: `Daily limit reached (${usage.limit} requests for ${plan} plan). Please wait or upgrade.` },
       { status: 429 }
     );
   }
@@ -91,7 +120,13 @@ export async function POST(req: NextRequest) {
 
     const newCount = await incrementUsage(uid);
 
-    return NextResponse.json({ text, used: newCount, remaining: 5 - newCount });
+    return NextResponse.json({
+      text,
+      used: newCount,
+      remaining: usage.limit - newCount,
+      limit: usage.limit,
+      plan,
+    });
   } catch (error) {
     if (error instanceof Error) {
       console.error("Gemini API error:", error);
